@@ -1,0 +1,58 @@
+<html>
+    <head>
+        <title>TEST</title>
+    </head>
+    <body>
+        <h1>NO TEST</h1>
+        <button onclick="closeAll(); host({onId:setId})">host</button>
+        or connect to:
+        <span id="hosts"></span>
+        <p id="INFO"></p>
+        <ul id="users"></ul>
+        <script src="/goRTC"></script>
+        <script>
+            function list(cb){
+                GET("/goRTC/list", (list)=>{
+                    list = JSON.parse(list)
+                    if(cb) cb(list)
+                })
+            }
+            function setId(id){
+                write("You are the host "+id+" Waiting for connections")
+            }
+            function write(text){
+                document.getElementById("INFO").innerHTML=text
+            }
+            setInterval(()=>{
+                ulist = document.getElementById("users")
+                ulist.innerHTML = ""
+                for(id in PCs){
+                    var el = document.createElement("li")
+                    el.innerHTML = id
+                    ulist.append(el)
+                }
+            }, 1000)
+            var LIST
+            var hostsSpan = document.getElementById("hosts")
+            setInterval(() => {
+                list((l)=>{
+                    LIST = l
+                    hostsSpan.innerHTML = ""
+                    for(id of LIST){
+                        var btn = document.createElement("button")
+                        btn.onclick = ()=>{
+                            write("connecting");
+                            connect({id: id, 
+                                onConnect:()=>write("connected to "+id),
+                                onDisconnect: ()=>write("connection lost"),
+                                onFailed: ()=>write("Failed to connect")
+                            });
+                        }
+                        btn.innerHTML = id
+                        hostsSpan.append(btn)
+                    }
+                })
+            }, 1000);
+        </script>
+    </body>
+</html>

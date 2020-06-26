@@ -1,6 +1,6 @@
 {
-  "name": "easyrtc",
-  "version": "1.0.0",
+  "name": "@etiaro/gortc",
+  "version": "1.0.1",
   "description": "Simplified WebRTC version",
   "main": "index.js",
   "directories": {
@@ -11,5 +11,8 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Etiaro",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.17.1"
+  }
 }
