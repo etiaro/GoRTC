@@ -13,7 +13,7 @@ function newID() {
     return Math.random().toString(36).substr(2, 9)+"_"+Math.random().toString(36).substr(2, 9);
 };
 
-_clientCode = fs.readFileSync('./client/dist.js', (err) => {
+_clientCode = fs.readFileSync('./client/script.js', (err) => {
     if (err) throw err
 }).toString()
 
@@ -40,9 +40,10 @@ module.exports = ()=>{
         if(users[data.id]){
             users[data.id].lastPing = new Date().getTime()
             if(data.listener)
-                if(users[data.id].offer){
+                if(users[data.id].offer || users[data.id].iceCandidate){
                     send(users[data.id])
-                    delete users[data.id]
+                    delete users[data.id].offer
+                    delete users[data.id].iceCandidate
                 }else
                     users[data.id].send = send
             if(data.answer){
