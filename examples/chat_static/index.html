@@ -34,6 +34,7 @@
                 height: 100%;
                 vertical-align: top;
                 text-align: center;
+                overflow-y: auto;
             }
             .input{
                 display: flex;
@@ -79,10 +80,8 @@
         <div class="content" id="content">
         </div>
         <div class="input">
-            <form>
-                <input type="text" id="msgInput" class="msgInput" autocomplete="off"/>
-                <button type="submit" class="btn" id="sendBtn">send</button>
-            </form>
+            <input type="text" id="msgInput" class="msgInput" autocomplete="off"/>
+            <button type="submit" class="btn" id="sendBtn">send</button>
         </div>
         <script src="/goRTC"></script>  <!--HERE WE ARE INCLUDING OUR PLUGIN-->
         <script> 
@@ -173,22 +172,26 @@
                 })
             }
 
-
-            document.getElementById("sendBtn").onclick = ()=>{
+            const msgDOM = document.getElementById("msgInput")
+            function sendMsg(){
                 if(active){
-                    const msgDOM = document.getElementById("msgInput")
                     if(active.message("msg", msgDOM.value))
                         writeMsg(msgDOM.value, false)
                     msgDOM.value = ""
                 }
             }
+
+
+            document.getElementById("sendBtn").onclick = sendMsg
+            msgDOM.addEventListener("keyup", e =>{ if(e.keyCode === 13) sendMsg() });
+
             document.getElementById("host").onclick = ()=>{
                 contentDOM.innerHTML = ""
-                if(active)
-                    active.close()
+                if(active) active.close()
+                if(hosted) hosted.stop()
                 const host = rtc.host()
+                hosted = host
                 host.addEventListener("hostidreceived", (e)=>{
-                    hosted = host
                     updateList(lastList)
                 })
                 host.addEventListener("connecting", e=>{

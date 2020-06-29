@@ -1,7 +1,6 @@
 var fs = require('fs')
 var express = require('express')
 
-
 class User {
     constructor(id) {
         this.id = id
@@ -9,6 +8,7 @@ class User {
         this.sendAnswer = {}
         this.sendIce = {}
         this.iceCandidate = {}
+        this.lastPing = new Date().getTime()
     }
 }
 
@@ -22,21 +22,19 @@ _clientCode = fs.readFileSync('./client/script.js', (err) => {
 
 module.exports = ()=>{
     var users = {}
-    function host(data, send){
+    setInterval(()=>{
+        let u = users
+        for(let id in u){
+            if(new Date().getTime() - users[id].lastPing > 15000){
+                delete users[id]
+                return
+            }
+        }
+    }, 1000)
+    async function host(data, send){
         if(data.getId){
             const id = newID()
-            users[id] = new User(id) 
-            const interv = setInterval(()=>{
-                if(!users[id]){
-                    clearInterval(interv)
-                    return
-                }
-                if(new Date().getTime() - users[id].lastPing > 15000){
-                    clearInterval(interv)
-                    delete users[id]
-                    return
-                }
-            })
+            users[id] = new User(id)
             send(id)
             return
         }
@@ -78,7 +76,7 @@ module.exports = ()=>{
             send("0")
         }
     }
-    function connect (data, send){
+    async function connect (data, send){
         if(users[data.id]){
             if(users[data.id].paused){
                 send("0")
@@ -113,6 +111,19 @@ module.exports = ()=>{
         }else
             send("0")
     }
+
+    
+    var router = express.Router()
+    router.get('/', (req, res)=>{
+        res.send("var URLh='"+req.originalUrl+"';"+_clientCode)
+    })
+    router.post('/host', (req,res) =>{
+        host(req.body, resp=>res.send(resp))
+    })
+    router.post('/connect', (req,res) =>{
+        connect(req.body, resp=>res.send(resp))
+    })
+
     return {
         host: host,
         connect: connect,
@@ -123,18 +134,6 @@ module.exports = ()=>{
             return users[id]
         },
         _clientCode: _clientCode,
-        _router: ()=>{
-            var router = express.Router()
-            router.get('/', (req, res)=>{
-                res.send("var URLh='"+req.originalUrl+"';"+_clientCode)
-            })
-            router.post('/host', (req,res) =>{
-                host(req.body, resp=>res.send(resp))
-            })
-            router.post('/connect', (req,res) =>{
-                connect(req.body, resp=>res.send(resp))
-            })
-            return router
-        }
+        _router: router
     }
 }

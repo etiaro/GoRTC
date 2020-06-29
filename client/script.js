@@ -217,9 +217,11 @@ class Host extends EventTarget{
                     INST.#host()  //restarting for new one
                     return
                 }
+                if(INST.closed) return
+
                 listen() //async, call it wherever
 
-                if(err || INST.closed) return  //error or no data(timed out), so nothing to parse
+                if(err) return  //error or no data(propably timed out), so nothing to parse
     
                 if(INST.paused && !!data){
                     POST(INST.rtc.url.host, JSON.stringify({id: ID, paused: true}), ()=>{})
@@ -295,6 +297,5 @@ class Host extends EventTarget{
     }
     stop(){     //deletes host from server, closes all connections, object will be destroyed/unusable
         this.closed = true
-
     }
 }
