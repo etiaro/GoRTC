@@ -3,14 +3,30 @@
         <title>chat example</title>
         <style>
             body{
-                width: 100%;
-                height: 99%;
+                overflow-x: hidden;
+                overflow: hidden;
+                width: 101vw;
+                height: 100vh;
                 margin: 0;
             }
             .content{
                 display: inline-block;
-                width: 77vw;
-                height: 100%;
+                width: 80vw;
+                height: calc(100% - 22px);
+                overflow-y: scroll;
+            }
+            .msg{
+                text-align: left;
+                padding-right: 20vw;
+                padding-left: 10;
+                margin: 0;
+                word-break: break-all;
+            }
+            .his{
+                text-align: right;
+                padding-right: 10;
+                padding-left: 20vw;
+                background-color: lightgray;
             }
             .nav{
                 display: inline-block;
@@ -18,6 +34,24 @@
                 height: 100%;
                 vertical-align: top;
                 text-align: center;
+            }
+            .input{
+                display: flex;
+                position: fixed;
+                right: 0;
+                bottom: 0;
+                width: 80vw;
+            }
+            form{
+                display: flex;
+                width: 100%;
+                margin: 0;
+            }
+            .msgInput{
+                width: 85%;
+            }
+            .btn{
+                width: 15%;
             }
             a{
                 text-decoration: none;
@@ -29,6 +63,9 @@
             .user{
                 color: black;
             }
+            .connecting{
+                background-color: gray;
+            }
             .active{
                 background-color: blue;
             }
@@ -39,64 +76,128 @@
             <span id="nav"></span>
             <a href="#" id="host"><div class="user">+</div></a>
         </div>
-        <div class="content">
-
+        <div class="content" id="content">
+        </div>
+        <div class="input">
+            <form>
+                <input type="text" id="msgInput" class="msgInput" autocomplete="off"/>
+                <button type="submit" class="btn" id="sendBtn">send</button>
+            </form>
         </div>
         <script src="/goRTC"></script>  <!--HERE WE ARE INCLUDING OUR PLUGIN-->
         <script> 
         function init(){
             const rtc = new GoRTC()
-            var GORTC = {
-                connect:(id)=>{}, 
-                host:()=>{}, 
-                close: (id)=>{},
-                closeAll: ()=>{},
-                send: ()=>{label, data}
-            }
-            var active = ""
+            //rtc.addeventlistener("stream", (e)=>{})         e.label, e.data
+            //rtc.addeventlistener("filepart", (e)=>{})       e.label, e.data, e.progress, totalsize, speed
+            //rtc.addeventlistener("file", (e)=>{})           e.label, e.type, e.data
+            //rtc.addEventListener("hosterror", (e)=>{})      e.error
+            var lastList = {}
             setInterval(()=>{//Some online users listing script
                 fetch('/goRTC/list')
                 .then(response => response.json())
-                .then(data => {
-                    var nav = document.getElementById("nav")
-                    nav.innerHTML = ""
-                    for(const id of data){
-                        var el = document.createElement("div")
-                        el.className = id===active ? "user active" : "user"
-                        el.innerHTML = id
-                        el.onclick = ()=>{el.className="user active"; active = id; rtc.connect(id); }
-                        var el2 = document.createElement("a"); el2.href = "#"; el2.append(el)
-                        nav.append(el2)
-                    }
+                .then((d)=>{
+                    if(d !==lastList) updateList(d)
                 });
             }, 1000)
-            rtc.addEventListener("connected", (e)=>{
-                console.log("connected to "+e.detail.id)
-                rtc.message(e.detail.id, "msg", "Hi!")
-            })
-            rtc.addEventListener("failed", (e)=>{
-                console.log("failed to connect to "+e.detail.id)
-                if(active == e.detail.id)
-                    active = ""
-            })
-            rtc.addEventListener("disconnected", (e)=>{
-                console.log("disconnected from "+e.detail.id)
-            })
-            rtc.addEventListener("closed", (e)=>{
-                console.log("closed connection with "+e.detail.id)
-            })
-            rtc.addEventListener("message", (e)=>{
-                console.log(e.detail.id, e.detail.label, e.detail.data)
-            })
-            //GORTC.addeventlistener("stream", (e)=>{})         e.label, e.data
-            //GORTC.addeventlistener("filepart", (e)=>{})       e.label, e.data, e.progress, totalsize, speed
-            //GORTC.addeventlistener("file", (e)=>{})           e.label, e.type, e.data
-            rtc.addEventListener("hoststarted", (e)=>{
-                active = e.detail.id
-            })
-            //GORTC.addEventListener("hosterror", (e)=>{})      e.error
+            function updateList(data){
+                lastList = data
+                var nav = document.getElementById("nav")
+                nav.innerHTML = ""
+                for(const id of data) {
+                    var el = document.createElement("div")
+                        el.innerHTML = id
+                    if(id===active.id || id===hosted.id)
+                        el.className = "user active"
+                    else{
+                        el.className = "user"
+                        el.onclick = () => {
+                            el.className = "user connecting"
+                            if(active) active.close()
+                            if(hosted) hosted.stop()
+                            hosted = false
+                            active = rtc.connect(id)
+                            handleConn(active)
+                        }
+                    }
+                    var el2 = document.createElement("a")
+                        el2.href = "#"
+                        el2.append(el)
+                    nav.append(el2)
+                }
+            }
+            const contentDOM = document.getElementById("content")
+            function writeMsg(msg, his){
+                var toScroll = false
+                if(contentDOM.scrollHeight - contentDOM.clientHeight <= contentDOM.scrollTop + 3)
+                    toScroll = true
 
-            document.getElementById("host").onclick = ()=>{rtc.closeAll(); rtc.host()}//handling creation of new 
+                var msgDOM = document.createElement("p")
+                msgDOM.className = his ? "msg his" : "msg"
+                msgDOM.innerHTML = msg
+                contentDOM.append(msgDOM)
+                if(toScroll) contentDOM.scrollTop = contentDOM.scrollHeight - contentDOM.clientHeight
+            }
+            var active = false
+            var hosted = false
+            function handleConn(conn){
+                active = conn
+                conn.addEventListener("connected", (e)=>{
+                    console.log("connected to "+e.detail.id)
+                    active = conn
+                    updateList(lastList)
+                    contentDOM.innerHTML = ""       //TODO here something like connected, and failed and connecting, waiting for connections
+                })
+                conn.addEventListener("failed", (e)=>{
+                    console.log("failed to connect to "+e.detail.id)
+                    if(active === conn)
+                        active = false
+                    updateList(lastList)
+                })
+                conn.addEventListener("disconnected", (e)=>{
+                    console.log("disconnected from "+e.detail.id)
+                    if(active === conn)
+                        active = false
+                    updateList(lastList)
+                })
+                conn.addEventListener("closed", (e)=>{
+                    console.log("closed connection with "+e.detail.id)
+                    if(active === conn)
+                        active = false
+                    updateList(lastList)
+                })
+                conn.addEventListener("message", (e)=>{
+                    console.log(e.detail.id, e.detail.label, e.detail.data)
+                    if(active === conn && e.detail.label === "msg")
+                        writeMsg(e.detail.data, true)
+                })
+            }
+
+
+            document.getElementById("sendBtn").onclick = ()=>{
+                if(active){
+                    const msgDOM = document.getElementById("msgInput")
+                    if(active.message("msg", msgDOM.value))
+                        writeMsg(msgDOM.value, false)
+                    msgDOM.value = ""
+                }
+            }
+            document.getElementById("host").onclick = ()=>{
+                contentDOM.innerHTML = ""
+                if(active)
+                    active.close()
+                const host = rtc.host()
+                host.addEventListener("hostidreceived", (e)=>{
+                    hosted = host
+                    updateList(lastList)
+                })
+                host.addEventListener("connecting", e=>{
+                    handleConn(e.detail.connection)
+                    e.detail.connection.addEventListener("connected", ()=>{host.pause()})
+                    e.detail.connection.addEventListener("closed", ()=>{host.resume()})
+                    e.detail.connection.addEventListener("failed", ()=>{host.resume()})
+                })
+            }//handling creation of new host
         }
         document.addEventListener("DOMContentLoaded", init)
         </script>

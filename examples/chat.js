@@ -7,7 +7,7 @@ const port = 3000
 
 app.use(express.json());
  
-app.use(express.static(path.join(__dirname, 'test_static')))
+app.use(express.static(path.join(__dirname, 'chat_static')))
 
 app.use('/goRTC/', goRTC._router())
 

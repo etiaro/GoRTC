@@ -6,6 +6,9 @@ class User {
     constructor(id) {
         this.id = id
         this.pending = {}
+        this.sendAnswer = {}
+        this.sendIce = {}
+        this.iceCandidate = {}
     }
 }
 
@@ -22,7 +25,7 @@ module.exports = ()=>{
     function host(data, send){
         if(data.getId){
             const id = newID()
-            users[id] = new User(id)   //TODO delete them if unavailable
+            users[id] = new User(id) 
             const interv = setInterval(()=>{
                 if(!users[id]){
                     clearInterval(interv)
@@ -39,24 +42,36 @@ module.exports = ()=>{
         }
         if(users[data.id]){
             users[data.id].lastPing = new Date().getTime()
-            if(data.listener)
-                if(users[data.id].offer || users[data.id].iceCandidate){
-                    send(users[data.id])
-                    delete users[data.id].offer
-                    delete users[data.id].iceCandidate
-                }else
+            if(data.paused){
+                for(var cId in users[data.id].sendAnswer){
+                    users[data.id].sendAnswer[cId](data)
+                    delete users[data.id].sendAnswer[cId]
+                }
+                send("1")
+                users[data.id].paused = true
+                return
+            }else
+                users[data.id].paused = false
+            if(data.listener){
+                delete users[data.id].send
+                if(Object.keys(users[data.id].pending).length === 0)
                     users[data.id].send = send
+                else{
+                    send(users[data.id].pending)
+                    users[data.id].pending = {}
+                }
+            }
             if(data.answer){
-                users[data.id].sendAnswer(data)
-                delete users[data.id].sendAnswer
+                users[data.id].sendAnswer[data.cId](data)
+                delete users[data.id].sendAnswer[data.cId]
                 send("1")
             }
             if(data.iceCandidate){
-                if(users[data.id].sendIce){
-                    users[data.id].sendIce(data.iceCandidate)
-                    delete users[data.id].sendIce
+                if(users[data.id].sendIce[data.cId]){
+                    users[data.id].sendIce[data.cId](data.iceCandidate)
+                    delete users[data.id].sendIce[data.cId]
                 }else
-                    users[data.id].sIceCandidate = data.iceCandidate
+                    users[data.id].iceCandidate[data.cId] = data.iceCandidate
             }
             return
         }else{
@@ -65,23 +80,34 @@ module.exports = ()=>{
     }
     function connect (data, send){
         if(users[data.id]){
+            if(users[data.id].paused){
+                send("0")
+                return
+            }
             if(data.iceListener){
-                if(users[data.id].sIceCandidate){
-                    send(users[data.id].sIceCandidate)
-                    delete users[data.id].sIceCandidate
+                if(!data.cId){
+                    send("-1")
+                    return
+                } 
+                if(users[data.id].iceCandidate[data.cId]){
+                    send(users[data.id].iceCandidate[data.cId])
+                    delete users[data.id].iceCandidate[data.cId]
                 }else
-                    users[data.id].sendIce = send
+                    users[data.id].sendIce[data.cId] = send
             }else{
+                if(!data.cId){
+                    send("-1")
+                    return
+                } 
                 if(users[data.id].send){
-                    users[data.id].send(data)
+                    users[data.id].send({[data.cId]: data})
                     delete users[data.id].send
                 }else{
-                    users[data.id].offer = data.offer
-                    users[data.id].iceCandidate = data.iceCandidate
+                    users[data.id].pending[data.cId] = data
                 }
-                if(data.offer)
-                    users[data.id].sendAnswer = send;
-                else
+                if(data.offer){
+                    users[data.id].sendAnswer[data.cId] = send;
+                }else
                     send("1")
             }
         }else

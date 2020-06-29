@@ -31,8 +31,35 @@ class GoRTC extends EventTarget{
         if(STUNconfig) this.configuration = STUNconfig
         this.PCs = {} //list of connections
     }
-    handleChannel(ch, id){
-        this.PCs[id].channels[ch.label] = ch
+    
+    //user-available methods
+    host(opts){
+        return new Host(this, opts)
+    }
+    connect(id, opts){
+        return new Connection(this, id, opts)
+    }
+}
+
+
+class Connection extends EventTarget{ 
+    #opts = {}//some default opts
+    constructor(rtc, id, opts){ //TODO opts?
+        super()
+        this.rtc = rtc
+        this.id = id    //id of connection(same as host id if connected to host)
+        for(var o in opts)
+            this.#opts[o] = opts[o]
+
+        if(this.#opts.cId) this.cId = this.#opts.cId    //hostDerived connection sets this to host id
+        else this.cId = newID()
+
+        if(!this.#opts.hostDerived)
+            this.#connect()
+            
+    }
+    #handleChannel = (ch)=>{
+        this.channels[ch.label] = ch
         switch(ch.label){
             case "message":
                 ch.onopen = (e)=>{
@@ -44,172 +71,102 @@ class GoRTC extends EventTarget{
                 ch.onclose = (e)=>{}
                 ch.onmessage = (e)=>{
                     var data = JSON.parse(e.data)
-                    this.dispatchEvent(new CustomEvent("message", {detail:{id: id,label: data.label, data: data.data}}))
+                    this.dispatchEvent(new CustomEvent("message", {detail:{id: this.id, label: data.label, data: data.data}}))
                 }
                 break
             case "system":
                 ch.onopen = ()=>{};ch.onclose = ()=>{}
                 ch.onmessage = (e)=>{
                     if(e.data === "close"){
-                        this.dispatchEvent(new CustomEvent("closed", {detail:{desc:"forced remotely", id: id}}))
-                        this.PCs[id].peerCon.close()
-                        delete this.PCs[id]
+                        this.peerCon.close()
+                        this.dispatchEvent(new CustomEvent("closed", {detail:{desc:"forced remotely", id: this.id}}))
                     }
                 }
                 break
             case "stream":
                 ch.onopen = (e)=>{};ch.onclose = (e)=>{}
                 ch.onmessage = (e)=>{
-                    this.dispatchEvent(new CustomEvent("stream", {detail:{id: id,label:e.data.label, data:e.data.data}}))
+                    this.dispatchEvent(new CustomEvent("stream", {detail:{id: this.id, label:e.data.label, data:e.data.data}}))
                 }
                 break
             case "file":
                 ch.onopen = (e)=>{};ch.onclose = (e)=>{}
                 ch.onmessage = (e)=>{
-                    this.dispatchEvent(new CustomEvent("file", {detail:{id: id,label:e.data.label, data:e.data.data}})) //TODO save file partially
-                    //GORTC.addeventlistener("filepart", (e)=>{})       e.label, e.data, e.progress, totalsize, speed
-                    //GORTC.addeventlistener("file", (e)=>{})           e.label, e.type, e.data
+                    this.dispatchEvent(new CustomEvent("file", {detail:{id: this.id,label:e.data.label, data:e.data.data}})) //TODO save file partially
+                    //TODO GORTC.addeventlistener("filepart", (e)=>{})       e.label, e.data, e.progress, totalsize, speed
+                    //TODO GORTC.addeventlistener("file", (e)=>{})           e.label, e.type, e.data
                 }
                 break
         }
     }
-    createChannels(id){
-        var messageCh = this.PCs[id].peerCon.createDataChannel("message")
-        this.handleChannel(messageCh, id)
-        var systemCh = this.PCs[id].peerCon.createDataChannel("system")
-        this.handleChannel(systemCh, id)
-        var streamCh = this.PCs[id].peerCon.createDataChannel("stream");
-        this.handleChannel(streamCh, id)
-        var fileCh = this.PCs[id].peerCon.createDataChannel("file");
-        this.handleChannel(fileCh, id)
+    createChannels(){   //it's not private due to Host object is calling this method
+        var messageCh = this.peerCon.createDataChannel("message")
+        this.#handleChannel(messageCh)
+        var systemCh = this.peerCon.createDataChannel("system")
+        this.#handleChannel(systemCh)
+        var streamCh = this.peerCon.createDataChannel("stream");
+        this.#handleChannel(streamCh)
+        var fileCh = this.peerCon.createDataChannel("file");
+        this.#handleChannel(fileCh)
     }
-    host(ID){
-        const cId = newID()
-        
-        this.PCs[cId] = {id: cId, channels: {}}
-        this.PCs[cId].peerCon = new RTCPeerConnection(this.configuration)
-        this.createChannels(cId)
-        
-        const INST = this
-        var candidates = []
-        async function listen(){ //we're listening for offers and candidates
-            POST(INST.url.host,JSON.stringify({listener: true, id: ID}), async (data,err)=>{
-                if(!INST.PCs[cId] || ["connected", "failed", "disconnected", "closed"].includes(INST.PCs[cId].peerCon.connectionState)) { //end of connecting 
-                    return//it's no longer needed, next one will be called
-                }
-                if(data === "0"){   //this means we lost our id
-                    INST.host()  //restarting for new one
-                    delete INST.PCs[cId]
-                    return
-                }
-                listen() //async, call it wherever
-                if(err) return
-    
-                data = JSON.parse(data)
-                if(!!data.offer){
-                    INST.PCs[cId].peerCon.setRemoteDescription(new RTCSessionDescription(data.offer))
-                    const answer = await INST.PCs[cId].peerCon.createAnswer()
-                    await INST.PCs[cId].peerCon.setLocalDescription(answer) //sending answer
-                    POST(INST.url.host, JSON.stringify({id: ID, answer: answer}), ()=>{})
-                    for(var cand of candidates){
-                        try {   //adding candidates from before
-                            await INST.PCs[cId].peerCon.addIceCandidate(cand);
-                        } catch (e) {
-                            console.error('Error adding received ice candidate', e);
-                        }
-                    }
-                    candidates = []
-                }
-                if(!!data.iceCandidate){
-                    if(!INST.PCs[cId].peerCon.remoteDescription)    //we have to set offer first
-                        candidates.push(data.iceCandidate)  //i'm taking this one later
-                    else{
-                        try {   //received candidate, adding
-                            await INST.PCs[cId].peerCon.addIceCandidate(data.iceCandidate);
-                        } catch (e) {
-                            console.error('Error adding received ice candidate', e);
-                        }
-                    }
-                }
-            })
-        }
-        if(!ID){//gathering new host id
-            POST(this.url.host, JSON.stringify({getId: true}), (id, err)=>{
-                if(err) {
-                    this.dispatchEvent(new CustomEvent("hosterror", {detail:{error: err}}))
-                    return
-                }
-                ID = id
-                this.dispatchEvent(new CustomEvent("hoststarted", {detail:{id: ID}}))
-                listen()
-            })
-        }else{
-            listen()
-        }
-        
-        var wasConnected = false
-        this.PCs[cId].peerCon.onconnectionstatechange = event => {
-            switch(this.PCs[cId].peerCon.connectionState){
+    hookEvents(){   //it's not private due to Host object is calling this method
+        this.peerCon.onconnectionstatechange = event => {
+            switch(this.peerCon.connectionState){
                 case 'connected':
-                    wasConnected = true
-                    this.host(ID) 
-                    this.dispatchEvent(new CustomEvent("connected", {detail:{id:cId}}))
+                    this.dispatchEvent(new CustomEvent("connected", {detail:{id:this.id}}))
                     break
                 case 'disconnected':
-                    this.dispatchEvent(new CustomEvent("disconnected", {detail:{id:cId}}))
+                    this.dispatchEvent(new CustomEvent("disconnected", {detail:{id:this.id}}))
                     break
                 case 'failed':
-                    if(!wasConnected)   this.host(ID)
-                    this.dispatchEvent(new CustomEvent("failed", {detail:{id:cId}}))
-                    delete this.PCs[cId]
+                    this.dispatchEvent(new CustomEvent("failed", {detail:{id:this.id}}))
                     break
                 case 'closed':
-                    this.dispatchEvent(new CustomEvent("closed", {detail:{id:cId}}))
-                    delete this.PCs[cId]
+                    this.dispatchEvent(new CustomEvent("closed", {detail:{id:this.id}}))
                     break
             }
         };
-        this.PCs[cId].peerCon.onicecandidate = event => {
-            if (event.candidate)    //sending ice candidate
-                POST(this.url.host, JSON.stringify({id: ID, iceCandidate: event.candidate}), ()=>{});
-        };
-        this.PCs[cId].peerCon.ondatachannel = function(event) {
-            INST.handleChannel(event.channel, cId)
+        this.peerCon.ondatachannel = event => {
+            this.#handleChannel(event.channel, this.id)
         }
     }
-    async connect(id){
-        this.PCs[id] = {id: id, channels: {}}
-        this.PCs[id].peerCon = new RTCPeerConnection(this.configuration)
-        this.createChannels(id)
+    #connect = async ()=>{
+        this.channels = {}
+        this.peerCon = new RTCPeerConnection(this.rtc.configuration)
+        this.createChannels()
 
-        const offer = await this.PCs[id].peerCon.createOffer()
-        await this.PCs[id].peerCon.setLocalDescription(offer)
+        const offer = await this.peerCon.createOffer()
+        await this.peerCon.setLocalDescription(offer)
         
         var noAnswer = false
-        POST(this.url.connect, JSON.stringify({id: id, offer:offer}) , async (data, error)=>{    //sending offer and setting answer from response
-            if(error){
+        POST(this.rtc.url.connect, JSON.stringify({id: this.id, offer:offer, cId: this.cId}) , async (data, error)=>{    //sending offer and setting answer from response
+            if(error){  //TODO some retry function and autoretry option
                 noAnswer = true
-                delete this.PCs[id]
-                this.dispatchEvent(new CustomEvent("failed", {detail:{id:id}}))
+                this.dispatchEvent(new CustomEvent("failed", {detail:{id:this.id, desc:"problem while contacting with server"}}))
                 return
             }
             data = JSON.parse(data)
+            if(data.paused || !data.answer){  //TODO some retry function and autoretry option
+                noAnswer = true
+                this.dispatchEvent(new CustomEvent("failed", {detail:{id:this.id, desc: "host is paused"}}))
+                return
+            }
             const remoteDesc = new RTCSessionDescription(data.answer)
-            await this.PCs[id].peerCon.setRemoteDescription(remoteDesc)
+            await this.peerCon.setRemoteDescription(remoteDesc)
         })
 
         const INST = this
         async function listen(){//here we're listenning for iceCandidates from host
-            POST(INST.url.connect, JSON.stringify({id: id, iceListener: true}) , async (candidate, err)=>{
-                if(candidate === "0" || noAnswer || !INST.PCs[id] || 
-                    ["connected", "failed", "disconnected", "closed"].includes(INST.PCs[id].peerCon.connectionState)){
+            POST(INST.rtc.url.connect, JSON.stringify({id: INST.id, iceListener: true, cId: INST.cId}) , async (candidate, err)=>{
+                if(candidate === "0" || noAnswer || 
+                    ["connected", "failed", "disconnected", "closed"].includes(INST.peerCon.connectionState)){
                     return //end of listening("0" means host with that id no longer exists)
                 }
                 listen() //its async so we can call it anywhere inside
                 if(err) return
                 candidate = JSON.parse(candidate)
                 try {
-                    await INST.PCs[id].peerCon.addIceCandidate(candidate);
+                    await INST.peerCon.addIceCandidate(candidate);
                 } catch (e) {
                     console.error('Error adding received ice candidate', e);
                 }
@@ -217,52 +174,127 @@ class GoRTC extends EventTarget{
         }
         listen()
     
-        this.PCs[id].peerCon.onconnectionstatechange = event => {
-            switch(this.PCs[id].peerCon.connectionState){
-                case 'connected':
-                    this.dispatchEvent(new CustomEvent("connected", {detail:{id:id}}))
-                    break
-                case 'disconnected':
-                    this.dispatchEvent(new CustomEvent("disconnected", {detail:{id:id}}))
-                    break
-                case 'failed':
-                    this.dispatchEvent(new CustomEvent("failed", {detail:{id:id}}))
-                    delete this.PCs[id]
-                    break
-                case 'closed':
-                    this.dispatchEvent(new CustomEvent("closed", {detail:{id:id}}))
-                    delete this.PCs[cId]
-                    break
-            }
-        };
-        this.PCs[id].peerCon.onicecandidate = event => {
+        this.hookEvents()
+        this.peerCon.onicecandidate = event => {
             if (event.candidate)    //we're sending candidate to host
-                POST(this.url.connect, JSON.stringify({id: id, iceCandidate: event.candidate}), ()=>{});
+                POST(this.rtc.url.connect, JSON.stringify({id: this.id, iceCandidate: event.candidate, cId: this.cId}), ()=>{});
         };
-        this.PCs[id].peerCon.ondatachannel = function(event) {
-            INST.handleChannel(event.channel, id)
-        }
     }
-    close(id){
-        if(this.PCs[id]){
-            if(this.PCs[id].channels["system"].readyState === "open")
-                this.PCs[id].channels["system"].send("close")
-            this.PCs[id].peerCon.close()
-            delete this.PCs[id]
-            this.dispatchEvent(new CustomEvent("closed", {detail: {desc: "forced close", id: id}}))
-        }
-    }
-    closeAll(){
-        for(var id in this.PCs)
-            this.close(id)
-    }
-    message(id, label, data){
-        if(this.PCs[id].channels["message"].readyState === "open")
-            this.PCs[id].channels["message"].send(JSON.stringify({label:label, data:data}))
+        //User methods starts here
+    message(label, data){
+        if(this.peerCon.connectionState === "closed") return false
+        if(this.channels["message"].readyState === "open")
+            this.channels["message"].send(JSON.stringify({label:label, data:data}))
         else{
-            if(!this.PCs[id].channels["message"].pending)
-                this.PCs[id].channels["message"].pending = []
-            this.PCs[id].channels["message"].pending.push(JSON.stringify({label:label, data:data}))
+            if(!this.channels["message"].pending)
+                this.channels["message"].pending = []
+            this.channels["message"].pending.push(JSON.stringify({label:label, data:data}))
         }
+        return true
+    }
+    close(){
+        if(this.peerCon.connectionState !== "closed"){
+            if(this.channels["system"].readyState === "open")
+                this.channels["system"].send("close")
+            this.peerCon.close()
+            this.dispatchEvent(new CustomEvent("closed", {detail: {desc: "forced close", id: this.id}}))
+        }
+    }
+}
+
+class Host extends EventTarget{ 
+    constructor(rtc, opts){ //TODO opts?
+        super()
+        this.rtc = rtc
+        this.#host()
+    }
+    #host = async (ID)=>{
+        const INST = this
+        this.cons = {}
+        async function listen(){ //we're listening for offers and candidates
+            POST(INST.rtc.url.host,JSON.stringify({listener: true, id: ID}), async (data,err)=>{
+                if(data === "0"){   //this means we lost our id, caused by inactivity
+                    INST.#host()  //restarting for new one
+                    return
+                }
+                listen() //async, call it wherever
+
+                if(err || INST.closed) return  //error or no data(timed out), so nothing to parse
+    
+                if(INST.paused && !!data){
+                    POST(INST.rtc.url.host, JSON.stringify({id: ID, paused: true}), ()=>{})
+                    return
+                }
+                data = JSON.parse(data)
+                for(var cId in data){
+                    if(!INST.cons[cId]){
+                        INST.cons[cId] = new Connection(INST.rtc, cId, {hostDerived: true, cId: ID})
+                
+                        INST.cons[cId].channels = {}
+                        INST.cons[cId].peerCon = new RTCPeerConnection(INST.rtc.configuration)
+                        INST.cons[cId].createChannels()
+                        INST.cons[cId].hookEvents()
+                        INST.cons[cId].candidates = []
+                        INST.cons[cId].peerCon.onicecandidate = event => {
+                            if (event.candidate)    //we're sending candidate to host
+                                POST(INST.rtc.url.host, JSON.stringify({id: ID, iceCandidate: event.candidate, cId: cId}), ()=>{});
+                        };
+                        INST.cons[cId].addEventListener("closed", ()=> delete INST.cons[cId])
+                        INST.cons[cId].addEventListener("failed", ()=> delete INST.cons[cId])
+                        INST.dispatchEvent(new CustomEvent("connecting", {detail: {id: cId, connection: INST.cons[cId]}}))
+                    }
+                    if(!!data[cId].offer){
+                        INST.cons[cId].peerCon.setRemoteDescription(new RTCSessionDescription(data[cId].offer))
+                        const answer = await INST.cons[cId].peerCon.createAnswer()
+                        await INST.cons[cId].peerCon.setLocalDescription(answer) //sending answer
+                        POST(INST.rtc.url.host, JSON.stringify({id: ID, answer: answer, cId: cId}), ()=>{})
+                        for(var cand of INST.cons[cId].candidates){
+                            try {   //adding candidates from before
+                                await INST.cons[cId].peerCon.addIceCandidate(cand);
+                            } catch (e) {
+                                console.error('Error adding received ice candidate', e);
+                            }
+                        }
+                        INST.cons[cId].candidates = []
+                    }
+                    if(!!data[cId].iceCandidate){
+                        if(!INST.cons[cId].peerCon.remoteDescription)    //we have to set offer first
+                        INST.cons[cId].candidates.push(data[cId].iceCandidate)  //i'm taking this one later
+                        else{
+                            try {   //received candidate, adding
+                                await INST.cons[cId].peerCon.addIceCandidate(data[cId].iceCandidate);
+                            } catch (e) {
+                                console.error('Error adding received ice candidate', e);
+                            }
+                        }
+                    }
+                }
+            })
+        }
+        if(!ID){//gathering new host id
+            POST(this.rtc.url.host, JSON.stringify({getId: true}), (id, err)=>{
+                if(err) {
+                    this.dispatchEvent(new CustomEvent("hosterror", {detail:{error: err}}))
+                    return
+                }
+                this.id = ID = id
+                this.dispatchEvent(new CustomEvent("hostidreceived", {detail:{id: ID}}))
+                listen()
+            })
+        }else{
+            listen()
+        }
+    }
+
+    //user available methods
+    pause(){    //pauses host, declines incoming connections, but saves class and ID
+        this.paused = true
+    }
+    resume(){   //resumes paused host, accepts again incoming connections
+        this.paused = false
+    }
+    stop(){     //deletes host from server, closes all connections, object will be destroyed/unusable
+        this.closed = true
+
     }
 }
